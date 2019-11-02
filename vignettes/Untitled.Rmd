@@ -1,0 +1,87 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+get the vegetation structure data filtered for those trees for which we have a subset of traits information. Result in 813 individual trees at continental scale
+```{r}
+setwd("..")
+inpath = "~/Documents/Data/Chapter3"
+dat = sf::read_sf(paste(inpath, "field_data/cfc_field_data.shp", sep="/"))
+```
+```{r}
+field_data <- neonUtilities::loadByProduct("DP1.10026.001", check.size = F)
+
+```
+now, clip the information for the stem locations. Not ideal, for we ultimately want to get the itcs rather than 
+the stem points, but a decent way to start it over. in this case we are extracting topography and spectra.
+
+```{r}
+#extract just a single pixel per individual crown, assuming the coordinates hit the crown
+sf::st_crs(dat) = 4326
+inpath="~/Documents/Data/Chapter3"
+prdr = c("_CHM", "_DSM", "_DTM", "lope", "pect", "hsi")
+get_list_augmented_matrix = pbapply::pblapply(1:dim(dat)[1], 
+            function(x, prdr, inpath) get_dataset_from_point(dat[x,]),  prdr = prdr, inpath= inpath)
+```
+
+Quickly recompose dataset
+
+```{r}
+#extract just a single pixel per individual crown, assuming the coordinates hit the crown
+neon_data = do.call(rbind.data.frame, get_list_augmented_matrix)
+```
+
+And extract climate data from netcdf
+
+```{r}
+#extract just a single pixel per individual crown, assuming the coordinates hit the crown
+data = dplyr::filter(data, !is.na(individualID))
+climate_data =  get_climate(field_data = data
+                            , tmppath = "./tmp/climate/"
+                            , startdate =1998
+                            , enddate = 2018
+                            , provider = "daymet")
+climate_data = do.call(rbind.data.frame, climate_data)
+```
+Now, let's get to soil stuff. 
+```{r}
+soil_data <- list()
+for(st in unique(field_data$siteID)){
+  soil_data[[st]] <- field_data %>% filter(siteID == st) %>%  get_soil_features
+}
+
+s_data <- do.call(rbind.data.frame, soil_data) %>%
+  dplyr::select(individualID, areasymbol, spatialversion, 
+                musym, nationalmusym, mukey, muareaacres, mupolygonkey, geometry)
+
+in.statement <- soilDB::format_SQL_in_statement((s_data$mukey))
+q <- paste("SELECT mukey, muname FROM mapunit WHERE mukey IN ", in.statement, sep="")
+
+q <- paste("SELECT 
+mukey, cokey, comppct_r, compname, taxclname
+FROM component
+WHERE mukey IN ", in.statement, sep="")
+
+q <- paste("SELECT 
+component.mukey, compname, taxclname, 
+taxorder, taxsuborder, taxgrtgroup, taxsubgrp
+FROM legend
+INNER JOIN mapunit ON mapunit.lkey = legend.lkey
+INNER JOIN component ON component.mukey = mapunit.mukey
+WHERE mapunit.mukey IN ", in.statement, sep="")
+
+res <- soilDB::SDA_query(q)
+res
+```
+
+Finally, get NEON data phylogenetic tree
+```{r}
+species_list <- field_ %>% dplyr::select(taxonID, scientificName)
+phylogeny_data <- get_cophenetic_distance(species_list)
+
+```
+
+
+
+

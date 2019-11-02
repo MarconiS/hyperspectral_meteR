@@ -34,3 +34,8 @@ vignettes/*.pdf
 
 # Shiny token, see https://shiny.rstudio.com/articles/shinyapps.html
 rsconnect/
+.DS_Store
+indir/all_hsi_for_kld.csv
+*.csv
+*.rds
+man/hello.Rd
