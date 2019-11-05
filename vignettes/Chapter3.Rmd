@@ -1,0 +1,223 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+load, clean and join data
+```{r, echo=FALSE}
+library(tidyverse)
+#load traits and aop
+setwd("..")
+nComp = 10
+invisible(base_data <- readr::read_csv("./indir/leaf_traits_and_aop.csv"))
+
+traits_names <- c("ntrgnPr",  "crbnPrc", "extrCBC",  "extrcCC"
+                  , "extrCAC",  "cl_lg__",  "lgnnPrc",  "clllsPr"  
+                  , "lm_frs_",  "lm_dry_", "leafAre" 
+                  ,"lfMssPA",  "dryMssF")
+random_effects <- c("domanID",  "nlcdCls")
+local_environment <- c("ope", "ect","CHM", "DTM")
+reflectance <- colnames(base_data)[grep("hsi", colnames(base_data))]
+bands_clusters <- readr::read_csv("./indir/bands_clusters_kld.csv")
+
+# load climate trends
+invisible(climate_trends <- readr::read_csv("./indir/climate_features.csv"))
+colnames(bands_clusters) <- "KLDcluster"
+
+```
+
+```{r, echo=FALSE,results='hide',fig.keep='all'}
+#apply KL-D to the data and reduce hyperspectral info into 15 aggregated pseudo-bands
+reflectance_data <- base_data[colnames(base_data) %in% reflectance] %>%
+  t %>%
+  cbind.data.frame(bands_clusters) %>%
+  group_by(KLDcluster) %>%
+  summarise_all(list(mean)) %>%
+  mutate_all(~ . /10000) %>%
+  t %>% data.frame
+
+reflectance_data <-  cbind.data.frame(base_data[["indvdID"]], reflectance_data[-1,])
+colnames(reflectance_data)[1] <- "individualID"
+```
+
+log scale and normalize responses
+
+```{r, echo=FALSE,results='hide',fig.keep='all'}
+# log scale and normalize responses
+leaf_traits_data <- base_data[colnames(base_data) %in% traits_names] %>%
+  mutate_all(log)%>%
+  scale
+
+leaf_traits_data <-  cbind.data.frame(base_data[["indvdID"]], leaf_traits_data)
+colnames(leaf_traits_data) <- c( "individualID", "ntrgnPr",  "crbnPrc", "extrCBC",  "extrcCC"
+                                 , "extrCAC",  "cl_lg",  "lgnnPrc",  "clllsPr"  
+                                 , "lm_frs",  "lm_dry", "leafAre" 
+                                 ,"lfMssPA",  "dryMssF")
+
+```
+
+reduce climate data dimensionality using PCA
+
+```{r, echo=FALSE,results='hide',fig.keep='all'}
+climate_features <- climate_trends %>%
+  dplyr::filter(individualID %in% base_data[["indvdID"]])
+prm <-  FactoMineR::PCA(climate_features[-1], ncp=10)
+climate_features <- data.frame(climate_features[["individualID"]], prm$ind$coord)
+colnames(climate_features)[1] <- "individualID"
+```
+
+get soil categories by querying soilDB
+```{r, echo=FALSE,results='hide',fig.keep='all'}
+#load data.frame with plots coordiantes in lat/long
+cfc_df <- readr::read_csv("indir/cfc_field_data.csv") %>%
+  dplyr::filter(individualID %in% base_data[["indvdID"]]) %>%
+  dplyr::select(individualID, plotID, siteID, taxonID, decimalLongitude, decimalLatitude) %>%
+  unique
+soil_data <- list()
+for(st in unique(base_data$siteID)){
+  soil_data[[st]] <- cfc_df %>% 
+    dplyr::filter(siteID == st) %>%  
+    get_soil_features
+}
+
+s_data <- do.call(rbind.data.frame, soil_data) %>%
+  dplyr::select(individualID, areasymbol, spatialversion, 
+                musym, nationalmusym, mukey, muareaacres, mupolygonkey, geometry)
+
+
+
+```
+
+get species correaltion
+```{r, echo=FALSE,results='hide',fig.keep='all'}
+# log scale and normalize responses
+species_list <- base_data %>%
+  dplyr::select(taxonID, scntfcN)
+colnames(species_list)[2] <- "scientificName"
+sp_list2 <- readr::read_csv("./indir/vegetation_structure.csv") %>%
+  dplyr::select(taxonID, scientificName) 
+
+species_list <- rbind.data.frame(species_list, sp_list2) %>%
+  unique 
+species_list <-  get_cophenetic_distance(species_list, sc_name = "scientificName")
+
+species_features <- base_data %>% 
+  dplyr::select(indvdID, scntfcN)
+species_features[["scntfcN"]] <- word(species_features[["scntfcN"]], 1,2)
+species_features[["scntfcN"]] <- 
+  str_replace(species_features[["scntfcN"]], " spp.", "")
+species_features[["scntfcN"]] <- 
+  str_replace(species_features[["scntfcN"]], " sp.", "")
+species_features[["scntfcN"]] <- tolower(species_features[["scntfcN"]])
+species_features <-left_join(species_features, species_list$resolved_names, 
+                             by = c("scntfcN" = "search_string")) %>%
+  select(indvdID, taxonID)
+colnames(species_features) <- c("individualID", "taxonID")
+#get meaningful soil characters
+# in.statement <- soilDB::format_SQL_in_statement((s_data$mukey))
+# q <- paste("SELECT 
+# component.mukey, taxclname, 
+# taxorder, taxsuborder, taxgrtgroup, taxsubgrp
+# FROM legend
+# INNER JOIN mapunit ON mapunit.lkey = legend.lkey
+# WHERE mapunit.mukey IN ", in.statement, sep="")
+
+local_soil <- c("musym")
+# soil_features <- soilDB::SDA_query(q)
+soil_features <- s_data %>%dplyr::select(individualID, local_soil)
+soil_features <- unique(soil_features)
+```
+
+get local environment features
+```{r}
+# log scale and normalize responses
+site_features <- base_data[colnames(base_data) %in% local_environment] %>%
+  scale
+
+site_features <-  cbind.data.frame(base_data[["indvdID"]], site_features)
+colnames(site_features)[1] <- "individualID"
+
+
+```
+
+define random effects
+```{r}
+random_effects_data <- base_data[colnames(base_data) %in% random_effects] 
+random_effects_data <-  cbind.data.frame(base_data[["indvdID"]], random_effects_data)
+colnames(random_effects_data)[1] <- "individualID"
+```
+
+train test split
+
+```{r}
+# log scale and normalize responses
+train_data <- cfc_df %>% dplyr::select(individualID, taxonID, siteID) %>%
+  group_by(taxonID, siteID) %>%
+  sample_frac(0.8)
+test_data <- cfc_df %>% dplyr::select(individualID, taxonID, siteID) %>%
+  filter(!individualID %in% train_data[["individualID"]])
+
+```
+
+```{r}
+train_dataset <- train_data %>%
+  ungroup() %>%
+  dplyr::select(-one_of("taxonID")) %>%
+  inner_join(leaf_traits_data) %>%
+  inner_join(climate_features) %>%
+  inner_join(site_features) %>%
+  inner_join(random_effects_data) %>%
+  inner_join(reflectance_data) %>% 
+  inner_join(species_features) %>%
+  inner_join(soil_features) %>%
+  unique
+
+train_dataset<- train_dataset[!is.na(train_dataset[["taxonID"]]),]
+train_dataset[!train_dataset[["taxonID"]] 
+         %in% colnames(species_list$cov_taxa_eff),"taxonID"] %>% 
+        unique %>% 
+        print
+train_dataset[train_dataset[["taxonID"]]=="ABIES","taxonID"] = "ABBA"
+train_dataset[train_dataset[["taxonID"]]=="BETUL","taxonID"] = "BELE"
+train_dataset[train_dataset[["taxonID"]]=="BOURR","taxonID"] = "BOSU2"
+train_dataset[train_dataset[["taxonID"]]=="FRAXI","taxonID"] = "FRAM2"
+train_dataset[train_dataset[["taxonID"]]=="HALES","taxonID"] = "HACA3"
+train_dataset[train_dataset[["taxonID"]]=="NYSY","taxonID"] = "NYBI"
+train_dataset[train_dataset[["taxonID"]]=="OXYDE","taxonID"] = "OXAR"
+train_dataset[train_dataset[["taxonID"]]=="PINUS","taxonID"] = "PIEC2"
+train_dataset[train_dataset[["taxonID"]]=="SASSA","taxonID"] = "SAAL5"
+
+```
+
+```{r}
+imp_data <- mice::mice(train_dataset, m = 5, print = FALSE)
+
+```
+
+Now we can finally use all these variables to generate models! Let's check first how well everything but reflectance represents our traits data
+
+```{r}
+library(brms)
+
+#define formula and build the model
+list_formulas <- paste(paste("mvbind("
+                       , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
+                       #climate variables
+                       , paste(colnames(climate_features)[2:8], collapse = " + ", sep = "") , " + "
+                       , paste(local_environment, collapse = " + ", sep = "") , " + "
+                       #, paste("(1 | soil| ",local_soil, ")", collapse = "+"), " + "
+                       # , paste("(1 | gr(",random_effects
+                       , "(1 | reg | domanID)" , "+"
+                       , "(1 | soil | musym)" , "+"
+                       , "(1 | eco | nlcdCls)" , "+"
+                       , "(1 | evo | taxonID"
+                       , ")", collapse = "+")
+
+#check if positive definite, in case slightly modify it to be invertible, according to: 
+taxaPD <- Matrix::nearPD( species_list$cov_taxa_eff)
+fit <- brm(list_formulas, data = train_dataset, cores =2, chains = 2, iter = 2000,  
+           family=brmsfamily("student"), cov_ranef = list(taxonID = as.matrix(taxaPD$mat)))
+
+
+```
+

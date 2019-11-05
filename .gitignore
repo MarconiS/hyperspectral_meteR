@@ -39,3 +39,4 @@ indir/all_hsi_for_kld.csv
 *.csv
 *.rds
 man/hello.Rd
+.Rproj.user
