@@ -12,11 +12,12 @@ nComp = 10
 invisible(base_data <- readr::read_csv("./indir/leaf_traits_and_aop.csv"))
 
 traits_names <- c("ntrgnPr",  "crbnPrc", "extrCBC",  "extrcCC"
-                  , "extrCAC",  "cl_lg__",  "lgnnPrc",  "clllsPr"  
-                  , "lm_frs_",  "lm_dry_", "leafAre" 
-                  ,"lfMssPA",  "dryMssF")
-random_effects <- c("domanID",  "nlcdCls")
-local_environment <- c("ope", "ect","CHM", "DTM")
+                  , "extrCAC",  "lgnnPrc",  "clllsPr"  
+                  #, "lm_frs_",  "lm_dry_", "cl_lg__"
+                  , "leafAre" , "lfMssPA",  "dryMssF")
+random_effects <- c("domanID",  "nlcdCls") #taxonID, soilID, plantStatus
+local_environment <- c("ope", "ect", "DTM")
+plant_status <- c("CHM", "plntStt")
 reflectance <- colnames(base_data)[grep("hsi", colnames(base_data))]
 bands_clusters <- readr::read_csv("./indir/bands_clusters_kld.csv")
 
@@ -50,9 +51,10 @@ leaf_traits_data <- base_data[colnames(base_data) %in% traits_names] %>%
 
 leaf_traits_data <-  cbind.data.frame(base_data[["indvdID"]], leaf_traits_data)
 colnames(leaf_traits_data) <- c( "individualID", "ntrgnPr",  "crbnPrc", "extrCBC",  "extrcCC"
-                                 , "extrCAC",  "cl_lg",  "lgnnPrc",  "clllsPr"  
-                                 , "lm_frs",  "lm_dry", "leafAre" 
-                                 ,"lfMssPA",  "dryMssF")
+                                 , "extrCAC", "lgnnPrc",  "clllsPr"  
+                                 #, "lm_frs",  "lm_dry", "cl_lg" 
+                                 , "leafAre","lfMssPA",  "dryMssF"
+                                 )
 
 ```
 
@@ -69,6 +71,7 @@ colnames(climate_features)[1] <- "individualID"
 get soil categories by querying soilDB
 ```{r, echo=FALSE,results='hide',fig.keep='all'}
 #load data.frame with plots coordiantes in lat/long
+#setwd("..")
 cfc_df <- readr::read_csv("indir/cfc_field_data.csv") %>%
   dplyr::filter(individualID %in% base_data[["indvdID"]]) %>%
   dplyr::select(individualID, plotID, siteID, taxonID, decimalLongitude, decimalLatitude) %>%
@@ -79,7 +82,10 @@ for(st in unique(base_data$siteID)){
     dplyr::filter(siteID == st) %>%  
     get_soil_features
 }
-
+```
+```{r}
+setwd("..")
+soil_data = readRDS("./indir/soil_data.rds")
 s_data <- do.call(rbind.data.frame, soil_data) %>%
   dplyr::select(individualID, areasymbol, spatialversion, 
                 musym, nationalmusym, mukey, muareaacres, mupolygonkey, geometry)
@@ -90,6 +96,7 @@ s_data <- do.call(rbind.data.frame, soil_data) %>%
 
 get species correaltion
 ```{r, echo=FALSE,results='hide',fig.keep='all'}
+setwd("..")
 # log scale and normalize responses
 species_list <- base_data %>%
   dplyr::select(taxonID, scntfcN)
@@ -139,7 +146,12 @@ colnames(site_features)[1] <- "individualID"
 
 
 ```
+```{r}
+status_features <- base_data[colnames(base_data) %in% plant_status] 
+status_features <-  cbind.data.frame(base_data[["indvdID"]], status_features)
+colnames(status_features)[1] <- "individualID"
 
+```
 define random effects
 ```{r}
 random_effects_data <- base_data[colnames(base_data) %in% random_effects] 
@@ -159,6 +171,7 @@ test_data <- cfc_df %>% dplyr::select(individualID, taxonID, siteID) %>%
 
 ```
 
+
 ```{r}
 train_dataset <- train_data %>%
   ungroup() %>%
@@ -170,6 +183,7 @@ train_dataset <- train_data %>%
   inner_join(reflectance_data) %>% 
   inner_join(species_features) %>%
   inner_join(soil_features) %>%
+  inner_join(status_features) %>%
   unique
 
 train_dataset<- train_dataset[!is.na(train_dataset[["taxonID"]]),]
@@ -187,6 +201,7 @@ train_dataset[train_dataset[["taxonID"]]=="OXYDE","taxonID"] = "OXAR"
 train_dataset[train_dataset[["taxonID"]]=="PINUS","taxonID"] = "PIEC2"
 train_dataset[train_dataset[["taxonID"]]=="SASSA","taxonID"] = "SAAL5"
 
+train_dataset = train_dataset[complete.cases(train_dataset),]
 ```
 
 ```{r}
@@ -213,11 +228,55 @@ list_formulas <- paste(paste("mvbind("
                        , "(1 | evo | taxonID"
                        , ")", collapse = "+")
 
+formula_reflectance_only <- paste(paste("mvbind("
+                       , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
+                       , paste(colnames(reflectance_data)[-1], collapse = " + ", sep = "") , " + "
+                       , "(1 | site | siteID"
+                       , ")", collapse = "+")
 #check if positive definite, in case slightly modify it to be invertible, according to: 
 taxaPD <- Matrix::nearPD( species_list$cov_taxa_eff)
 fit <- brm(list_formulas, data = train_dataset, cores =2, chains = 2, iter = 2000,  
            family=brmsfamily("student"), cov_ranef = list(taxonID = as.matrix(taxaPD$mat)))
 
+refl_fit <- brm(formula_reflectance_only, data = train_dataset, cores =2, chains = 2, iter = 2000,  
+           family=brmsfamily("student"), prior = prior(horseshoe(), class = "b"))
 
 ```
+test dataset
+```{r}
+test_dataset <- test_data %>%
+  ungroup() %>%
+  dplyr::select(-one_of("taxonID")) %>%
+  inner_join(leaf_traits_data) %>%
+  inner_join(climate_features) %>%
+  inner_join(site_features) %>%
+  inner_join(random_effects_data) %>%
+  inner_join(reflectance_data) %>% 
+  inner_join(species_features) %>%
+  inner_join(soil_features) %>%
+  inner_join(status_features) %>%
+  unique
 
+test_dataset<- test_dataset[!is.na(test_dataset[["taxonID"]]),]
+test_dataset[!test_dataset[["taxonID"]] 
+         %in% colnames(species_list$cov_taxa_eff),"taxonID"] %>% 
+        unique %>% 
+        print
+test_dataset[test_dataset[["taxonID"]]=="ABIES","taxonID"] = "ABBA"
+test_dataset[test_dataset[["taxonID"]]=="BETUL","taxonID"] = "BELE"
+test_dataset[test_dataset[["taxonID"]]=="BOURR","taxonID"] = "BOSU2"
+test_dataset[test_dataset[["taxonID"]]=="FRAXI","taxonID"] = "FRAM2"
+test_dataset[test_dataset[["taxonID"]]=="HALES","taxonID"] = "HACA3"
+test_dataset[test_dataset[["taxonID"]]=="NYSY","taxonID"] = "NYBI"
+test_dataset[test_dataset[["taxonID"]]=="OXYDE","taxonID"] = "OXAR"
+test_dataset[test_dataset[["taxonID"]]=="PINUS","taxonID"] = "PIEC2"
+test_dataset[test_dataset[["taxonID"]]=="SASSA","taxonID"] = "SAAL5"
+
+test_dataset = test_dataset[complete.cases(train_dataset),]
+```
+
+```{r}
+#test model
+
+bR2 <- bayes_R2(refl_fit, new_data= test_dataset)
+```
