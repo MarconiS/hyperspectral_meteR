@@ -1,3 +1,6 @@
+library(tidyverse)
+library(brms)
+source("./R/get_phenetic_distance.R")
 nComp = 10
 invisible(base_data <- readr::read_csv("./indir/ch3.csv"))
 
@@ -121,7 +124,7 @@ full_dataset[full_dataset[["taxonID"]]=="SASSA","taxonID"] = "SAAL5"
 full_dataset = full_dataset %>% filter(siteID != "JORN")
 
 
-
+set.seed(1987)
 train_data <- full_dataset %>% #dplyr::select(individualID, taxonID, siteID) %>%
   group_by(taxonID, siteID) %>%
   sample_frac(0.8)
@@ -137,8 +140,8 @@ train_data=train_data[complete.cases(train_data),]
 list_formulas <- paste(paste("mvbind("
                              , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
                        #climate variables
-                       #, paste("s(",colnames(climate_features)[2:10],  ")", collapse = " + ", sep = "")  
-                       #, " + "
+                       , paste("s(",colnames(climate_features)[2:10],  ")", collapse = " + ", sep = "")  
+                       , " + "
                        , paste(local_environment, collapse = " + ", sep = "") , " + "
                        , paste(c("CHM:plantStatus", "stemDiameter:plantStatus"), collapse = " + ", sep = "") , " + "
                        , "(1 | soil | musym)" , "+"
@@ -146,8 +149,19 @@ list_formulas <- paste(paste("mvbind("
                        , "(1 | evo | taxonID"
                        , ")", collapse = "+")
 
-train_data
+test_data <- test_data[complete.cases(test_data),]
+test_data <- filter(test_data, musym !="31D")
+
+ind <- sapply(train_data, is.numeric)
+train_data[ind] <- lapply(train_data[ind], scale)
 
 taxaPD <- Matrix::nearPD( species_list$cov_taxa_eff)
-fit_loc_ind_tax <- brm(list_formulas, data = train_data, cores =2, chains = 2, iter = 2000,  
+fit <- brm(list_formulas, data = train_data, cores =2, chains = 2, iter = 2000,  
            family=brmsfamily("gaussian"), cov_ranef = list(taxonID = as.matrix(taxaPD$mat)))
+
+bR2 <- bayes_R2(fit, newdata= test_data, robust = T)
+print(bR2)
+
+parameters_summary <- VarCorr(refl_fit)
+obj = list(mod = refl_fit, R2 = bR2, params =parameters_summary )
+saveRDS(obj, "./models/full_mod.rds")
