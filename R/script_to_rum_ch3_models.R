@@ -140,7 +140,7 @@ train_data=train_data[complete.cases(train_data),]
 list_formulas <- paste(paste("mvbind("
                              , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
                        #climate variables
-                       , paste("s(",colnames(climate_features)[2:10],  ")", collapse = " + ", sep = "")  
+                       , paste("s(",colnames(climate_features)[-1],  ")", collapse = " + ", sep = "")  
                        , " + "
                        , paste(local_environment, collapse = " + ", sep = "") , " + "
                        , paste(c("CHM:plantStatus", "stemDiameter:plantStatus"), collapse = " + ", sep = "") , " + "
@@ -156,12 +156,23 @@ ind <- sapply(train_data, is.numeric)
 train_data[ind] <- lapply(train_data[ind], scale)
 
 taxaPD <- Matrix::nearPD( species_list$cov_taxa_eff)
-fit <- brm(list_formulas, data = train_data, cores =2, chains = 2, iter = 2000,  
+fit <- brm(list_formulas, data = train_data, cores =4, chains = 4, iter = 4000,  seed = 1987,
            family=brmsfamily("gaussian"), cov_ranef = list(taxonID = as.matrix(taxaPD$mat)))
+cls=1:ncol(test_data)
+tst_scaled <- lapply(cls[as.vector(ind)], function(x){
+  scale(test_data[x], center = attr(train_data[[x]],"scaled:center"),
+                              scale = attr(train_data[[x]],"scaled:scale"))})
+tst_scaled <- do.call(cbind.data.frame, tst_scaled)
+tst_scaled <- cbind.data.frame(test_data[!ind], tst_scaled)
+bR2 <- bayes_R2(fit, newdata= tst_scaled, robust = T)
+bR2 <- bayes_R2(fit, newdata= tst_scaled, robust = T)
 
-bR2 <- bayes_R2(fit, newdata= test_data, robust = T)
 print(bR2)
 
-parameters_summary <- VarCorr(refl_fit)
-obj = list(mod = refl_fit, R2 = bR2, params =parameters_summary )
+parameters_summary <- VarCorr(fit)
+obj = list(mod = fit, R2 = bR2, params =parameters_summary )
 saveRDS(obj, "./models/full_mod.rds")
+
+me_regional <- predict(fit, effects = colnames(climate_features)[-1])
+me_local <- predict(fit, newdata = tst_no_cilm)
+
