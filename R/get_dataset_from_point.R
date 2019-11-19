@@ -5,12 +5,13 @@
 #' @export
 #' @examples
 #' @importFrom magrittr "%>%"
-
+#treeid = dat[9,]
 get_dataset_from_point <- function(treeid = NULL,
                                    prdr = c("_CHM", "_DSM", "_DTM",
-                                             "lope", "pect", "hsi"),
+                                            "lope", "pect", "hsi"),
                                    inpath = "~/Documents/Data/Chapter3"){
   #get list of products that could be used to extract information from
+  treeid = sf::st_as_sf(treeid, coords=c("decimalLongitude", "decimalLatitude"), crs=4326)
   flrds = list.dirs(paste(inpath, "plots", sep="/"))
   flrds = grep(paste(prdr, collapse = "|"), flrds, value=T)
   for(ii in flrds){
@@ -18,6 +19,9 @@ get_dataset_from_point <- function(treeid = NULL,
 
     #get files path
     pt = list.files(ii, treeid[["plotID"]], full.names = T)
+    if(length(pt)>1){
+      pt = list.files(ii, treeid[["individualID"]], full.names = T)
+    }
     if(length(pt)==0){
       if(var_nm %in% c("kld", "hsi")){
         warning("missing hyperspectral data for plot", treeid[["plotID"]])
