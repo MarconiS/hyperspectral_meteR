@@ -9,7 +9,7 @@ library(tidyverse)
 #load traits and aop
 setwd("..")
 nComp = 10
-invisible(base_data <- readr::read_csv("./indir/leaf_traits_and_aop.csv"))
+invisible(base_data <- readr::read_csv("./indir/ch3.csv"))
 
 traits_names <- c("ntrgnPr",  "crbnPrc", "extrCBC",  "extrcCC"
                   , "extrCAC",  "lgnnPrc",  "clllsPr"  
@@ -46,8 +46,8 @@ log scale and normalize responses
 ```{r, echo=FALSE,results='hide',fig.keep='all'}
 # log scale and normalize responses
 leaf_traits_data <- base_data[colnames(base_data) %in% traits_names] %>%
-  mutate_all(log)%>%
-  scale
+  mutate_all(log)# %>%
+  #scale
 
 leaf_traits_data <-  cbind.data.frame(base_data[["indvdID"]], leaf_traits_data)
 colnames(leaf_traits_data) <- c( "individualID", "ntrgnPr",  "crbnPrc", "extrCBC",  "extrcCC"
@@ -73,7 +73,7 @@ get soil categories by querying soilDB
 #load data.frame with plots coordiantes in lat/long
 #setwd("..")
 cfc_df <- readr::read_csv("indir/cfc_field_data.csv") %>%
-  dplyr::filter(individualID %in% base_data[["indvdID"]]) %>%
+  dplyr::filter(individualID %in% base_data[["individualID"]]) %>%
   dplyr::select(individualID, plotID, siteID, taxonID, decimalLongitude, decimalLatitude) %>%
   unique
 soil_data <- list()
@@ -121,18 +121,22 @@ species_features <-left_join(species_features, species_list$resolved_names,
   select(indvdID, taxonID)
 colnames(species_features) <- c("individualID", "taxonID")
 #get meaningful soil characters
-# in.statement <- soilDB::format_SQL_in_statement((s_data$mukey))
-# q <- paste("SELECT 
-# component.mukey, taxclname, 
-# taxorder, taxsuborder, taxgrtgroup, taxsubgrp
-# FROM legend
-# INNER JOIN mapunit ON mapunit.lkey = legend.lkey
-# WHERE mapunit.mukey IN ", in.statement, sep="")
-
-local_soil <- c("musym")
-# soil_features <- soilDB::SDA_query(q)
+in.statement <- soilDB::format_SQL_in_statement((s_data$mukey))
+q <- paste("SELECT
+component.mukey,  taxclname,
+           taxorder, taxsuborder, taxgrtgroup, taxsubgrp
+           FROM legend
+           INNER JOIN mapunit ON mapunit.lkey = legend.lkey
+LEFT OUTER JOIN component ON component.mukey = mapunit.mukey
+           WHERE mapunit.mukey IN ", in.statement, sep="")
+# run query, process results, and return as data.frame object
+res <- soilDB::SDA_query(q)
+res <- res[complete.cases(res),]
+res$mukey
+local_soil <- c("mukey")
 soil_features <- s_data %>%dplyr::select(individualID, local_soil)
-soil_features <- unique(soil_features)
+soil_features <- unique(soil_features) 
+soil_features <- left_join(soil_features, res)
 ```
 
 get local environment features
@@ -163,6 +167,7 @@ train test split
 
 ```{r}
 # log scale and normalize responses
+cfc_df <- cfc_df[complete.cases(cfc_df),]
 train_data <- cfc_df %>% dplyr::select(individualID, taxonID, siteID) %>%
   group_by(taxonID, siteID) %>%
   sample_frac(0.8)
@@ -202,6 +207,7 @@ train_dataset[train_dataset[["taxonID"]]=="PINUS","taxonID"] = "PIEC2"
 train_dataset[train_dataset[["taxonID"]]=="SASSA","taxonID"] = "SAAL5"
 
 train_dataset = train_dataset[complete.cases(train_dataset),]
+train_dataset = mutate_if(train_dataset, is.numeric, scale)
 ```
 
 ```{r}
@@ -218,11 +224,14 @@ library(brms)
 list_formulas <- paste(paste("mvbind("
                        , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
                        #climate variables
-                       , paste(colnames(climate_features)[2:8], collapse = " + ", sep = "") , " + "
+                       , paste("s(",colnames(climate_features)[2:6],  ")", collapse = " + ", sep = "")  
+                      # , paste(colnames(climate_features)[2:6], collapse = " + ", sep = "")
+                       , " + "
                        , paste(local_environment, collapse = " + ", sep = "") , " + "
                        #, paste("(1 | soil| ",local_soil, ")", collapse = "+"), " + "
                        # , paste("(1 | gr(",random_effects
-                       , "(1 | reg | domanID)" , "+"
+                       #, "(1 | reg | domanID)" , "+"
+                       , "(1 | hlt | plntStt)" , "+"
                        , "(1 | soil | musym)" , "+"
                        , "(1 | eco | nlcdCls)" , "+"
                        , "(1 | evo | taxonID"
@@ -230,17 +239,17 @@ list_formulas <- paste(paste("mvbind("
 
 formula_reflectance_only <- paste(paste("mvbind("
                        , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
-                       , paste(colnames(reflectance_data)[-1], collapse = " + ", sep = "") , " + "
+                       , paste("s(", colnames(reflectance_data)[-1], ")", collapse = " + ", sep = "") , " + "
                        , "(1 | site | siteID"
                        , ")", collapse = "+")
 #check if positive definite, in case slightly modify it to be invertible, according to: 
 taxaPD <- Matrix::nearPD( species_list$cov_taxa_eff)
 fit <- brm(list_formulas, data = train_dataset, cores =2, chains = 2, iter = 2000,  
-           family=brmsfamily("student"), cov_ranef = list(taxonID = as.matrix(taxaPD$mat)))
+           family=brmsfamily("gaussian"), cov_ranef = list(taxonID = as.matrix(taxaPD$mat)))
 
-refl_fit <- brm(formula_reflectance_only, data = train_dataset, cores =2, chains = 2, iter = 2000,  
-           family=brmsfamily("student"), prior = prior(horseshoe(), class = "b"))
-
+refl_fit <- brm(formula_reflectance_only, data = train_dataset, cores =2, chains = 2, iter = 6000,  
+           family=brmsfamily("gaussian"), prior = prior(horseshoe(), class = "b"))
+arameters_summary <- VarCorr(refl_fit)
 ```
 test dataset
 ```{r}
@@ -272,11 +281,20 @@ test_dataset[test_dataset[["taxonID"]]=="OXYDE","taxonID"] = "OXAR"
 test_dataset[test_dataset[["taxonID"]]=="PINUS","taxonID"] = "PIEC2"
 test_dataset[test_dataset[["taxonID"]]=="SASSA","taxonID"] = "SAAL5"
 
-test_dataset = test_dataset[complete.cases(train_dataset),]
+test_dataset = test_dataset %>% dplyr::filter(siteID %in% unique(train_dataset$siteID))
+test_dataset = test_dataset[complete.cases(test_dataset),]
+
 ```
 
 ```{r}
 #test model
 
-bR2 <- bayes_R2(refl_fit, new_data= test_dataset)
+bR2 <- bayes_R2(fit, newdata= test_dataset, robust = T)
+print(bR2)
+
+parameters_summary <- VarCorr(refl_fit)
+obj = list(mod = refl_fit, R2 = bR2, params =parameters_summary )
+saveRDS(obj, "./outdir/refl_mod.rds")
+
 ```
+

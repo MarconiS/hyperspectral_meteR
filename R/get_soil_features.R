@@ -28,6 +28,6 @@ get_soil_features <- function(plt){
   #clip
   soil_features <- sf::st_join(centers, soil_geometry_to_clip, join = sf::st_intersects)
   #soil_features$plotID<- plt$plotID
-
+  #colnames(soil_features)<- c("individualID", paste("soil", 1:(ncol(soil_features)-1), sep="."))
   return(soil_features)
 }

@@ -7,8 +7,7 @@
 #' @importFrom magrittr "%>%"
 
 get_dataset_from_point <- function(treeid = NULL,
-                                   prdr = c("_CHM", "_DSM", "_DTM",
-                                             "lope", "pect", "hsi"),
+                                   prdr = c("hsi"),
                                    inpath = "~/Documents/Data/Chapter3"){
   #get list of products that could be used to extract information from
   flrds = list.dirs(paste(inpath, "plots", sep="/"))
