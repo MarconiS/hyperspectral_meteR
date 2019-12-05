@@ -15,7 +15,7 @@
 
 # query soil components by areasymbol and musym
 #WHERE = "areasymbol = 'IN005' AND musym = 'MnpB2'"
-get_soil_physics <- function(ii, s_data){
+get_soil_physics <- function(s_data){
   soil_features= NULL
   for(ii in 1:nrow(s_data)){
     profile_data = soilDB::fetchSDA_component(WHERE = paste("areasymbol = '", 

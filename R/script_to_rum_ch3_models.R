@@ -81,26 +81,29 @@ if(refl_dr == "kld"){
   
 }
 colnames(reflectance_data)[1] <- "individualID"
-check_outliers <- apply(reflectance_data[-1], 1, function(x)sum(abs(x)))
-check_outliers <- cbind.data.frame(reflectance_data[["individualID"]], check_outliers) 
-check_outliers <-  filter(check_outliers, check_outliers > 300)
-
-climate_features <- climate_trends %>%
-  dplyr::filter(individualID %in% base_data[["individualID"]])
-prm <-  FactoMineR::PCA(climate_features[-1], ncp=10)
-climate_features <- data.frame(climate_features[["individualID"]], prm$ind$coord)
-colnames(climate_features)[1] <- "individualID"
-
-soil_data = readRDS("./indir/soil_data2.rds")
-s_data <- do.call(rbind.data.frame, soil_data) %>%
-  dplyr::select(individualID, areasymbol, 
-                musym, nationalmusym, mukey, geometry) %>% unique
+# check_outliers <- apply(reflectance_data[-1], 1, function(x)sum(abs(x)))
+# check_outliers <- cbind.data.frame(reflectance_data[["individualID"]], check_outliers) 
+# check_outliers <-  filter(check_outliers, check_outliers > 300)
+# 
+# climate_features <- climate_trends %>%
+#   dplyr::filter(individualID %in% base_data[["individualID"]])
+# prm <-  FactoMineR::PCA(climate_features[-1], ncp=10)
+# climate_features <- data.frame(climate_features[["individualID"]], prm$ind$coord)
+# colnames(climate_features)[1] <- "individualID"
+climate <- get_data_pca_transforamtion(climate_trends)
+climate_features = climate$climate_features[-1]
+colnames(climate_features) <- c("individualID","daylength", "prec", "rad", "snow_melt", "tmax", "tmin", "vp")
+# 
+# soil_data = readRDS("./indir/soil_data2.rds")
+# s_data <- do.call(rbind.data.frame, soil_data) %>%
+#   dplyr::select(individualID, areasymbol, 
+#                 musym, nationalmusym, mukey, geometry) %>% unique
 
 # local_soil <- c("musym")
 # soil_features <- s_data %>%dplyr::select(individualID, local_soil)
 # soil_features <- unique(soil_features)
-soil_features <- get_soil_physics(s_data)
-
+#soil_features <- get_soil_physics(s_data)
+soil_features <- readr::read_csv("./indir/soil_features.csv")
 species_list <- base_data %>%
   dplyr::select(taxonID, scientificName)
 sp_list2 <- readr::read_csv("./indir/vegetation_structure.csv") %>%
@@ -187,22 +190,24 @@ test_data <- full_dataset %>% #dplyr::select(individualID, taxonID, siteID) %>%
 
 colnames(train_data)
 train_data=train_data[complete.cases(train_data),]
-train_data=train_data %>% filter(!individualID %in% check_outliers[1])
+#train_data=train_data %>% filter(!individualID %in% check_outliers[1])
 
 
 #define formula and build the model
 list_formulas <- paste(paste("mvbind("
-                             , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
+                      , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
                        #climate variables
-                       , paste("s(",colnames(climate_features)[2:6],  ")", collapse = " + ", sep = "")  
+                       , paste("s(",colnames(climate_features),  ")", collapse = " + ", sep = "")  
                        , " + "
                        , paste("s(",colnames(soil_features)[2:6],  ")", collapse = " + ", sep = "")  
                        , " + "
                        , paste(local_environment, collapse = " + ", sep = "") , " + "
-                       , paste(c("CHM:plantStatus", "stemDiameter:plantStatus"), collapse = " + ", sep = "") , " + "
+                       , paste(c("CHM", "stemDiameter"), collapse = " + ", sep = "") , " + "
+                       , "(1 | ind | plantStatus)" , "+"
                        , "(1 | eco | domainID:nlcdClass)" , "+"
-                       , "(1 | evo | taxonID"
-                       , ")", collapse = "+")
+                       #, "(1 | evo | taxonID"
+                       #, ")"
+                      , collapse = "+")
 
 test_data <- test_data[complete.cases(test_data),]
 #test_data <- filter(test_data, musym !="31D")
@@ -225,32 +230,32 @@ print(bR2)
 
 parameters_summary <- VarCorr(fit)
 obj = list(mod = fit, R2 = bR2, params =parameters_summary )
-saveRDS(obj, "./models/full_mod.rds")
-
-me_regional <- predict(fit, effects = colnames(climate_features)[-1])
-me_local <- predict(fit, newdata = tst_no_cilm)
-
-formula_reflectance <- paste(paste("mvbind("
-                                   , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
-                             #climate variables
-                             , paste("s(",paste("X", 1:nComp, sep=""),  ")", collapse = " + ", sep = "")  
-                             , " + "
-                             , "(1 | site | siteID)", collapse = "+")
-
-
-fit_refl2 <- brm(formula_reflectance, data = train_data, cores =4, 
-                chains = 4, iter = 4000,  seed = 1987,
-                family=brmsfamily("gaussian"), prior = prior(horseshoe()))
-
-test_data <- test_data[complete.cases(test_data),]
-cls=1:ncol(test_data)
-tst_scaled <- lapply(cls[as.vector(ind)], function(x){
-  scale(test_data[x], center = attr(train_data[[x]],"scaled:center"),
-        scale = attr(train_data[[x]],"scaled:scale"))})
-tst_scaled <- do.call(cbind.data.frame, tst_scaled)
-tst_scaled <- cbind.data.frame(test_data[!ind], tst_scaled)
-
-bR2_refl2 <- bayes_R2(fit_refl, newdata= tst_scaled, robust = T)
-bR2_refl2
-objref = list(mod = fit_refl, R2 = bR2_refl)#, params =parameters_summary )
-saveRDS(objref, "./models/refl50.rds")
+saveRDS(obj, "./models/ind_env_mod.rds")
+# 
+# me_regional <- predict(fit, effects = colnames(climate_features)[-1])
+# me_local <- predict(fit, newdata = tst_no_cilm)
+# 
+# formula_reflectance <- paste(paste("mvbind("
+#                                    , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
+#                              #climate variables
+#                              , paste("s(",paste("X", 1:nComp, sep=""),  ")", collapse = " + ", sep = "")  
+#                              , " + "
+#                              , "(1 | site | siteID)", collapse = "+")
+# 
+# 
+# fit_refl2 <- brm(formula_reflectance, data = train_data, cores =4, 
+#                 chains = 4, iter = 4000,  seed = 1987,
+#                 family=brmsfamily("gaussian"), prior = prior(horseshoe()))
+# 
+# test_data <- test_data[complete.cases(test_data),]
+# cls=1:ncol(test_data)
+# tst_scaled <- lapply(cls[as.vector(ind)], function(x){
+#   scale(test_data[x], center = attr(train_data[[x]],"scaled:center"),
+#         scale = attr(train_data[[x]],"scaled:scale"))})
+# tst_scaled <- do.call(cbind.data.frame, tst_scaled)
+# tst_scaled <- cbind.data.frame(test_data[!ind], tst_scaled)
+# 
+# bR2_refl2 <- bayes_R2(fit_refl, newdata= tst_scaled, robust = T)
+# bR2_refl2
+# objref = list(mod = fit_refl, R2 = bR2_refl)#, params =parameters_summary )
+# saveRDS(objref, "./models/refl50.rds")
