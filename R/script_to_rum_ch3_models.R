@@ -2,6 +2,7 @@
 library(tidyverse)
 library(brms)
 source("./R/get_phenetic_distance.R")
+source("./R/get_data_pca_transforamtion.R")
 source("./R/utilities.R")
 source("./R/soil_physics.R")
 nComp = 20
@@ -24,7 +25,7 @@ plant_status <- c("CHM", "stemDiameter", "plantStatus")
 bands_clusters <- readr::read_csv("./indir/bands_20clusters_kld.csv")
 
 # load climate trends
-invisible(climate_trends <- readr::read_csv("./indir/climate_features.csv"))
+climate_trends <- readr::read_csv("./indir/climate_features.csv")
 colnames(bands_clusters) <- "KLDcluster"
 
 
@@ -85,19 +86,18 @@ colnames(reflectance_data)[1] <- "individualID"
 # check_outliers <- cbind.data.frame(reflectance_data[["individualID"]], check_outliers) 
 # check_outliers <-  filter(check_outliers, check_outliers > 300)
 # 
-# climate_features <- climate_trends %>%
-#   dplyr::filter(individualID %in% base_data[["individualID"]])
+climate_trends <- climate_trends %>%
+   dplyr::filter(individualID %in% base_data[["individualID"]])
 # prm <-  FactoMineR::PCA(climate_features[-1], ncp=10)
 # climate_features <- data.frame(climate_features[["individualID"]], prm$ind$coord)
 # colnames(climate_features)[1] <- "individualID"
 climate <- get_data_pca_transforamtion(climate_trends)
-climate_features = climate$climate_features[-1]
-colnames(climate_features) <- c("individualID","daylength", "prec", "rad", "snow_melt", "tmax", "tmin", "vp")
-# 
-# soil_data = readRDS("./indir/soil_data2.rds")
-# s_data <- do.call(rbind.data.frame, soil_data) %>%
-#   dplyr::select(individualID, areasymbol, 
-#                 musym, nationalmusym, mukey, geometry) %>% unique
+climate_features = climate$climate_features
+
+soil_data = readRDS("./indir/soil_data2.rds")
+s_data <- do.call(rbind.data.frame, soil_data) %>%
+  dplyr::select(individualID, areasymbol,
+                musym, nationalmusym, mukey, geometry) %>% unique
 
 # local_soil <- c("musym")
 # soil_features <- s_data %>%dplyr::select(individualID, local_soil)
@@ -157,8 +157,8 @@ full_dataset <- base_data %>% select(individualID, siteID, taxonID) %>%
   inner_join(soil_features) %>%
   unique
 
-full_dataset <- full_dataset %>%
-  filter(!individualID %in% as.character(check_outliers[[1]]))
+# full_dataset <- full_dataset %>%
+#   filter(!individualID %in% as.character(check_outliers[[1]]))
 full_dataset<- full_dataset[!is.na(full_dataset[["taxonID"]]),]
 full_dataset[!full_dataset[["taxonID"]] 
              %in% colnames(species_list$cov_taxa_eff),"taxonID"] %>% 
@@ -197,26 +197,27 @@ train_data=train_data[complete.cases(train_data),]
 list_formulas <- paste(paste("mvbind("
                       , paste(colnames(leaf_traits_data)[-1], collapse = " , "), ") ~ ", sep = "")
                        #climate variables
-                       , paste("s(",colnames(climate_features),  ")", collapse = " + ", sep = "")  
+                       , paste("s(",colnames(climate_features)[-1],  ")", collapse = " + ", sep = "")  
                        , " + "
-                       , paste("s(",colnames(soil_features)[2:6],  ")", collapse = " + ", sep = "")  
+                       , paste("s(",colnames(soil_features)[-1],  ")", collapse = " + ", sep = "")  
                        , " + "
                        , paste(local_environment, collapse = " + ", sep = "") , " + "
                        , paste(c("CHM", "stemDiameter"), collapse = " + ", sep = "") , " + "
-                       , "(1 | ind | plantStatus)" , "+"
-                       , "(1 | eco | domainID:nlcdClass)" , "+"
-                       #, "(1 | evo | taxonID"
-                       #, ")"
+                       , "(1 | ind | plantStatus)" 
+                       , "+"
+                       #, "(1 | eco | domainID:nlcdClass)" 
+                      #, "+"
+                       , "(1 | evo | taxonID"
+                       , ")"
                       , collapse = "+")
 
 test_data <- test_data[complete.cases(test_data),]
-#test_data <- filter(test_data, musym !="31D")
-
 ind <- sapply(train_data, is.numeric)
 train_data[ind] <- lapply(train_data[ind], scale)
 
 taxaPD <- Matrix::nearPD( species_list$cov_taxa_eff)
-fit <- brm(list_formulas, data = train_data, cores =2, chains = 2, iter = 2000,  seed = 1987,
+fit <- brm(list_formulas, data = train_data, cores =4, chains = 4, iter = 3000,  seed = 1987,
+           prior = prior(horseshoe()),
            family=brmsfamily("gaussian"), cov_ranef = list(taxonID = as.matrix(taxaPD$mat)))
 cls=1:ncol(test_data)
 tst_scaled <- lapply(cls[as.vector(ind)], function(x){
@@ -230,7 +231,7 @@ print(bR2)
 
 parameters_summary <- VarCorr(fit)
 obj = list(mod = fit, R2 = bR2, params =parameters_summary )
-saveRDS(obj, "./models/ind_env_mod.rds")
+saveRDS(obj, "./models/full_mod_cl1.rds")
 # 
 # me_regional <- predict(fit, effects = colnames(climate_features)[-1])
 # me_local <- predict(fit, newdata = tst_no_cilm)

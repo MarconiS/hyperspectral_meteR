@@ -2,6 +2,7 @@ get_data_pca_transforamtion <- function(climate_trends) {
   #PCA by variable
   var <- c("daylength", "prec", "rad", "snow_melt", "tmax", "tmin", "vp")
   climate_pca = NULL
+  climate_features = NULL
   for(ii in var){
     climate_pca[[ii]] <- climate_trends %>%
       select(contains(ii)) %>%
