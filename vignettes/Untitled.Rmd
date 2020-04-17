@@ -18,11 +18,12 @@ the stem points, but a decent way to start it over. in this case we are extracti
 
 ```{r}
 #extract just a single pixel per individual crown, assuming the coordinates hit the crown
-sf::st_crs(dat) = 4326
 inpath="~/Documents/Data/Chapter3"
-prdr = c("_CHM", "_DSM", "_DTM", "lope", "pect", "hsi")
+inpath = "/Volumes/Athena/Chapter3_Data_clips/plots/"
+prdr = c("_CHM", "_DSM", "_DTM", "lope", "pect")
 get_list_augmented_matrix = pbapply::pblapply(1:dim(dat)[1], 
             function(x, prdr, inpath) get_dataset_from_point(dat[x,]),  prdr = prdr, inpath= inpath)
+
 ```
 
 Quickly recompose dataset
@@ -30,14 +31,15 @@ Quickly recompose dataset
 ```{r}
 #extract just a single pixel per individual crown, assuming the coordinates hit the crown
 neon_data = do.call(rbind.data.frame, get_list_augmented_matrix)
+readr::write_csv(neon_data, "./outdir/traits_16p_refl.csv")
 ```
 
 And extract climate data from netcdf
 
 ```{r}
 #extract just a single pixel per individual crown, assuming the coordinates hit the crown
-data = dplyr::filter(data, !is.na(individualID))
-climate_data =  get_climate(field_data = data
+dat = dplyr::filter(data, !is.na(individualID))
+climate_data =  get_climate(field_data = dat
                             , tmppath = "./tmp/climate/"
                             , startdate =1998
                             , enddate = 2018

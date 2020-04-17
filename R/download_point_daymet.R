@@ -15,8 +15,8 @@ download_point_daymet <- function(listSites = NULL,
   if(is.null(field_data[["decimalLatitude"]]) || is.na(field_data[["decimalLongitude"]])){
     new_dat <- get_lat_long(field_data)
     daymet_coords <- cbind(as.character(field_data[["individualID"]]),
-                           new_dat[["northing"]],
-                           new_dat[["easting"]]) %>% unique
+                           new_dat[["longitude"]],
+                           new_dat[["latitude"]]) %>% unique
   }else{
     daymet_coords <- cbind(as.character(field_data[["individualID"]])
                            , field_data[["decimalLatitude"]]
